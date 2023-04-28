@@ -1,0 +1,2 @@
+#Escribir un programa en Python que acepte un número de argumento entero positivo n y genere una lista de los n primeros números impares.
+#El programa debe imprimir la lista resultante en la salida estandar.

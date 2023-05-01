@@ -16,6 +16,12 @@ def main():
     args = parser.parse_args()
 
     try:
+        args = parser.parse_args()
+    except:
+        sys.stderr.write("Error: Argumentos invalidos\n")
+        sys.exit(1)
+
+    try:
         with open(args.file, 'r') as archivo:
             lineas = archivo.readlines()
     except FileNotFoundError:

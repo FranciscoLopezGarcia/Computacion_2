@@ -21,5 +21,5 @@ class Mesa:
             raise ValueError("No hay cartas en el mazo")
         return self.mazo.pop(random.randint(0, len(self.mazo) - 1))
 
-# mesa = Mesa()
+mesa = Mesa()
 # print(mesa.mazo)

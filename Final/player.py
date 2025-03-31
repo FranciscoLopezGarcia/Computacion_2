@@ -6,3 +6,5 @@ class Jugador:
     
     def agregar_carta(self, carta):
         self.mano.append(carta)
+
+##tcrear puntos

@@ -14,3 +14,6 @@ with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         elif accion == "Q":
             print("Te has plantado.")
             break
+
+
+        ##oiewnfoie

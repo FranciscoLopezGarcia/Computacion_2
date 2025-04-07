@@ -8,7 +8,7 @@ with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
     while True:
         try:
             data = sock.recv(1024).decode()
-        except:
+        except Exception:
             break
         if not data:
             break

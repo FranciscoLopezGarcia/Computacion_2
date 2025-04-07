@@ -5,56 +5,67 @@ import time
 from mesa import Mesa
 from player import Jugador
 
-# Tiempo de espera (en segundos) para acumular jugadores en la sala de espera.
-TIEMPO_ESPERA = 30
+TIEMPO_ESPERA = 30  # Tiempo en segundos para acumular jugadores
 
 class BlackjackHandler(socketserver.BaseRequestHandler):
     def handle(self):
         self.request.settimeout(None)
         self.server.log(f"Nuevo cliente conectado: {self.client_address}")
-        # Al conectarse se agrega a la sala de espera.
+        # Agregar cliente a la sala de espera.
         with self.server.lock:
-            self.server.waiting_players.append(self.request)
-        self.send("Te has conectado al servidor de Blackjack.\nEsperá a que comience la partida.\n")
+            self.server.waiting_clients.append(self.request)
+        self.send("Te has conectado al servidor de Blackjack.\nEsperá el inicio de la partida.\n")
         
-        # Espera hasta que el juego se inicie y su socket esté incluido en la partida actual.
+        # Espera hasta que se inicie una partida y su socket se incluya en game_clients.
         while True:
             with self.server.lock:
                 if self.request in self.server.game_clients:
                     break
             time.sleep(0.5)
         
-        # Una vez iniciado el juego, se obtiene el Jugador asignado.
+        # Se obtiene el objeto Jugador asignado a este socket.
         jugador = self.server.get_jugador(self.request)
         self.send(f"Bienvenido a la partida, {jugador.nombre}.\n")
         
-        # Ciclo de turnos: el cliente actúa solo cuando le corresponde.
+        # Bucle de turno: el jugador juega hasta plantarse, retirarse, alcanzar 21 o pasarse.
         while not self.server.game_over:
+            # Solo el jugador cuyo socket coincide con current_turn juega.
             with self.server.turn_cond:
                 while self.server.current_player_socket() != self.request and not self.server.game_over:
                     self.server.turn_cond.wait()
             if self.server.game_over:
                 break
-            # Es su turno
+            # Es el turno de este jugador. Se le envía siempre su mano actualizada.
+            self.send(f"Tus cartas: {self.server.player_hand_str(jugador)}\n")
             self.send("Es tu turno. Ingresa acción: [H]it, [S]tand, [E]xit: ")
             try:
                 accion = self.request.recv(1024).decode().strip().upper()
-            except:
+            except Exception:
                 accion = "E"
             if accion == "H":
                 self.server.player_hit(self.request)
+                # Verificamos si el jugador alcanzó o superó 21:
+                if jugador.calcular_puntos() >= 21:
+                    self.send(f"Tu puntaje es {jugador.calcular_puntos()}.\n")
+                    break  # Finaliza turno automáticamente.
             elif accion == "S":
                 self.server.player_stand(self.request)
+                break  # Se planta: termina su turno.
             elif accion == "E":
                 self.server.player_exit(self.request)
+                break
             else:
                 self.send("Acción inválida.\n")
                 continue
-            with self.server.turn_cond:
-                self.server.advance_turn()
-                self.server.turn_cond.notify_all()
-        
-        # Final de partida: se envía el mensaje final al cliente.
+            # Si no terminó el turno, se repite la opción.
+        # Final del turno de este jugador: notifica que terminó su turno y avanza.
+        with self.server.turn_cond:
+            self.server.advance_turn(advance_only_current=True)
+            self.server.turn_cond.notify_all()
+        # Si el juego ya terminó, se espera el turno del crupier y el resumen final.
+        while not self.server.game_over:
+            time.sleep(0.5)
+        # Enviar resumen final individual.
         final_msg = self.server.get_final_message(self.request)
         self.send(final_msg)
         self.request.close()
@@ -62,7 +73,7 @@ class BlackjackHandler(socketserver.BaseRequestHandler):
     def send(self, mensaje):
         try:
             self.request.sendall(mensaje.encode())
-        except:
+        except Exception:
             pass
 
 class BlackjackServer(socketserver.ThreadingTCPServer):
@@ -71,20 +82,21 @@ class BlackjackServer(socketserver.ThreadingTCPServer):
         super().__init__(*args, **kwargs)
         self.lock = threading.Lock()
         self.turn_cond = threading.Condition(self.lock)
-        # Sala de espera: sockets que esperan para la próxima partida.
-        self.waiting_players = []
-        # Sockets que participan en la partida actual.
+        # Clientes en sala de espera (socket)
+        self.waiting_clients = []
+        # Sockets incluidos en la partida actual.
         self.game_clients = []
-        # Lista de tuplas (socket, Jugador) para la partida actual.
+        # Lista de tuplas (socket, Jugador) de la partida actual.
         self.players = []
+        # Variables del juego.
         self.game_over = False
         self.current_turn_index = 0
         self.dealer = None
         self.mesa = None
         self.game_in_progress = False
 
-    def log(self, mensaje):
-        print(mensaje)
+    def log(self, msg):
+        print(msg)
 
     def get_jugador(self, sock):
         for s, jugador in self.players:
@@ -111,7 +123,6 @@ class BlackjackServer(socketserver.ThreadingTCPServer):
     def deal_card(self, sock, jugador):
         carta = self.mesa.repartir_carta()
         p, v = carta
-        # Si es As, se pregunta al cliente.
         if v == 'A':
             try:
                 sock.sendall("Has recibido un As. ¿Quieres que valga 1 u 11? ".encode())
@@ -127,6 +138,7 @@ class BlackjackServer(socketserver.ThreadingTCPServer):
         else:
             v = int(v)
         jugador.agregar_carta((p, v))
+        # Actualiza a todos con la mano de ese jugador.
         self.broadcast(self.player_hand_str(jugador))
 
     def player_hit(self, sock):
@@ -149,8 +161,11 @@ class BlackjackServer(socketserver.ThreadingTCPServer):
                 self.broadcast(f"{jugador.nombre} se retira.")
                 break
 
-    def advance_turn(self):
-        self.current_turn_index += 1
+    def advance_turn(self, advance_only_current=False):
+        # Si se usa advance_only_current, solo se finaliza el turno actual sin pasar al siguiente.
+        if not advance_only_current:
+            self.current_turn_index += 1
+        # Si ya pasaron todos los jugadores, se inicia el turno del crupier.
         if self.current_turn_index >= len(self.players):
             self.dealer_turn()
             self.game_over = True
@@ -199,15 +214,16 @@ class BlackjackServer(socketserver.ThreadingTCPServer):
 
     def start_game(self):
         with self.lock:
-            if not self.waiting_players:
+            if not self.waiting_clients:
                 return
-            # Se toman todos los sockets en espera para formar la partida actual.
-            self.game_clients = self.waiting_players.copy()
-            self.waiting_players.clear()
+            # Toma todos los sockets en espera y forma la partida actual.
+            self.game_clients = self.waiting_clients.copy()
+            self.waiting_clients.clear()
             self.players = []
             for sock in self.game_clients:
                 jugador = Jugador(f"Jugador-{sock.getpeername()[1]}")
                 self.players.append((sock, jugador))
+            # Inicializa variables de la partida.
             self.mesa = Mesa()
             self.game_over = False
             self.current_turn_index = 0
@@ -227,16 +243,17 @@ class BlackjackServer(socketserver.ThreadingTCPServer):
                 else:
                     v = int(v)
                 self.dealer.agregar_carta((p, v))
-            # Envía a cada jugador su mano y muestra la carta visible del crupier.
+            # Envia a cada jugador su mano inicial.
             for sock, jugador in self.players:
                 try:
-                    sock.sendall((f"Tus cartas: {', '.join([f'{p} de {v}' for p,v in jugador.mano])} - "
-                                  f"Puntos: {jugador.calcular_puntos()}\n").encode())
+                    sock.sendall((f"Tus cartas: {self.player_hand_str(jugador)}\n").encode())
                 except:
                     pass
+            # Muestra la mano del crupier (solo la primera carta y “X” para la oculta).
             dealer_first = f"{self.dealer.mano[0][0]} de {self.dealer.mano[0][1]}, X"
             self.broadcast("Mano del crupier: " + dealer_first)
             self.game_in_progress = True
+            # Notifica a los jugadores que comience el turno del primero.
             with self.turn_cond:
                 self.turn_cond.notify_all()
 
@@ -246,10 +263,10 @@ def game_loop(server):
         time.sleep(TIEMPO_ESPERA)
         server.log("Iniciando partida...")
         server.start_game()
-        # Espera a que finalice la partida.
+        # Espera a que la partida finalice.
         while not server.game_over:
             time.sleep(1)
-        server.log("Partida finalizada. Esperando nuevos jugadores para la siguiente partida...")
+        server.log("Partida finalizada.")
         with server.lock:
             server.game_clients.clear()
             server.players.clear()

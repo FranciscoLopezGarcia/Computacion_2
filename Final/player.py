@@ -1,8 +1,9 @@
+# player.py
 class Jugador:
     def __init__(self, nombre):
         self.nombre = nombre
-        self.mano = []  # Lista de tuplas: (palo, valor) donde el valor ya es numérico
-        self.stand = False  # Indica si el jugador se plantó o salió
+        self.mano = []  # Lista de tuplas: (palo, valor) (valor ya numérico)
+        self.stand = False  # Indica si el jugador se plantó
         self.exit = False   # Indica si el jugador se retiró
 
     def agregar_carta(self, carta):

@@ -1,21 +1,31 @@
-# player.py
-class Jugador:
-    def __init__(self, nombre):
-        self.nombre = nombre
-        self.mano = []  # Cada elemento es una tupla (palo, valor) con valor numérico fijo.
-        self.stand = False  # Se planta
-        self.exit = False   # Se retira
+class Player:
+    def __init__(self, name, is_dealer=False):
+        self.name = name
+        self.hand = []
+        self.stand = False
+        self.is_dealer = is_dealer
 
-    def agregar_carta(self, carta):
-        self.mano.append(carta)
+    def add_card(self, card):
+        self.hand.append(card)
 
-    def calcular_puntos(self):
-        return sum(valor for _, valor in self.mano)
+    def point_calc(self):
+        total = sum(card.puntos for card in self.hand)
+        aces = sum(1 for card in self.hand if card.valor == 'A')
+        while total > 21 and aces:
+            total -= 10
+            aces -= 1
+        return total
 
-    def estado_final(self):
-        puntos = self.calcular_puntos()
-        if puntos > 21:
-            return "Perdiste, te pasaste de 21."
-        elif puntos == 21:
-            return "¡Ganaste! Tienes 21."
-        return ""
+    def status(self):
+        points = self.point_calc()
+        if points == 21 and len(self.hand) == 2:
+            return "Blackjack"
+        elif points > 21:
+            return "Bust"
+        else:
+            return "Active"
+
+    def show_hand(self):
+        return ', '.join(str(card) for card in self.hand)
+
+
